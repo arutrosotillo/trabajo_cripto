@@ -1,0 +1,95 @@
+/* Reset de estilos básicos */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: white;
+    color: black;
+    line-height: 1.6;
+}
+
+header {
+    background-color: black;
+    padding: 10px 0;
+}
+
+nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.logo {
+    font-size: 24px;
+    color: white;
+}
+
+.logo img {
+    width: 150px; /* Ajusta el tamaño según tus necesidades */
+    height: auto; /* Mantiene la proporción de la imagen */
+}
+.menu {
+    list-style: none;
+    display: flex;
+}
+
+.menu li {
+    margin-left: 20px;
+}
+
+.menu a {
+    text-decoration: none;
+    color: white;
+    font-weight: bold;
+}
+
+.hero {
+    text-align: center;
+    padding: 100px 20px;
+    background-color: #f4f4f4;
+    margin-top: 50px;
+}
+
+.grande {
+    font-size: 6em;
+    font-weight: bold;
+    color: black;
+}
+
+.subtitulo {
+    font-size: 2em;
+    color: black;
+}
+
+.btn {
+    display: inline-block;
+    padding: 10px 20px;
+    font-size: 1em;
+    color: white;
+    background-color: black;
+    text-decoration: none;
+    border-radius: 5px;
+    transition: background-color 0.3s ease;
+    margin-top: 20px; /* Añade un margen superior para separar el botón del subtítulo */
+}
+
+.btn:hover {
+    background-color: #333;
+}
+
+footer {
+    background-color: black;
+    color: white;
+    text-align: center;
+    padding: 10px 0;
+    position: fixed;
+    width: 100%;
+    bottom: 0;
+}
