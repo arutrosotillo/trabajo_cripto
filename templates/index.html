@@ -3,32 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Landing Page Minimalista</title>
+    <title>IdeaPod</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
     <header>
         <nav>
             <div class="logo">
-                <imgº src="img/logo.png" alt="Logo">
+                <img src="{{ url_for('static', filename='img/joe.png') }}" alt="Logo">
             </div>
             <ul class="menu">
                 <li><a href="Home">Home</a></li>
-                <li><a href="papanoel">Papá Noel</a></li>
-                <li><a href="lascartas">Las cartas</a></li>
-                <li><a href="envia-tu-carta">Envía tu carta</a></li>
-                <li><a href="juega">¡Juega!</a></li>
-                <li><a href="login" class="btn">Log in</a></li>
-                <li><a href="register" class="btn">Register</a></li>
+                <li><a href="mis-mensajes">Mis Mensajes</a></li>
+                {% if is_logged_in %}
+                    <li><a href="{{ url_for('logout') }}" class="btn">Cerrar sesión</a></li>
+                {% else %}
+                    <li><a href="{{ url_for('login') }}" class="btn">Iniciar sesión</a></li>
+                    <li><a href="{{ url_for('register') }}" class="btn">Registrar</a></li>
+                {% endif %}
             </ul>
         </nav>
     </header>
     <main>
         <section class="hero">
-            <h1 class="grande">Sigue a Papá Noel</h1>
-            <p class="subtitulo">122 días 01 h 04 min 32 s</p>
-            <a href="seguimiento" class="btn">EMPEZAR</a>
+            <h1 class="grande">Comparte tus ideas con Joe Rogan</h1>
+            <p class="subtitulo">Envía tus sugerencias y ayuda a elegir los próximos invitados del podcast</p>
+            {% if is_logged_in %}
+            <form action="{{ url_for('submit_message') }}" method="post">
+                <textarea name="message" rows="4" cols="50" class="mensaje" placeholder="Escribe tu mensaje aquí..."></textarea>
+                <br>
+                <button type="submit" class="btn">Enviar</button>
+            </form>
+            {% else %}
+            <p>Debes estar logueado para enviar un mensaje. <a href="{{ url_for('login') }}">Inicia sesión</a></p>
+            {% endif %}
         </section>
     </main>
 </body>
