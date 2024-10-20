@@ -1,0 +1,48 @@
+<!-- mensajes.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <title>Mensajes</title>
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">
+                <img src="{{ url_for('static', filename='img/joe.png') }}" alt="Logo">
+            </div>
+            <ul class="menu">
+                <li><a href="{{ url_for('index') }}">Home</a></li>
+                <li><a href="{{ url_for('mensajes') }}">Mensajes</a></li>
+                {% if is_logged_in %}
+                    <li><a href="{{ url_for('logout') }}" class="btn">Cerrar sesión</a></li>
+                {% else %}
+                    <li><a href="{{ url_for('login') }}" class="btn">Iniciar sesión</a></li>
+                    <li><a href="{{ url_for('register') }}" class="btn">Registrar</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </header>
+    <section class="formato-mensajes">
+        <h1 class="titulo-mensajes">Mensajes</h1>
+        <table class="elementos-tabla">
+            <thead>
+                <tr>
+                    <th>Usuario</th>
+                    <th>Mensaje Cifrado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for message in messages %}
+                <tr>
+                    <td>{{ message.username }}</td>
+                    <td>{{ message.message }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+</body>
+</html>

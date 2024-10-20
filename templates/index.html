@@ -14,8 +14,8 @@
                 <img src="{{ url_for('static', filename='img/joe.png') }}" alt="Logo">
             </div>
             <ul class="menu">
-                <li><a href="Home">Home</a></li>
-                <li><a href="mis-mensajes">Mis Mensajes</a></li>
+                <li><a href="{{ url_for('index') }}">Home</a></li>
+                <li><a href="{{ url_for('mensajes') }}">Mensajes</a></li>
                 {% if is_logged_in %}
                     <li><a href="{{ url_for('logout') }}" class="btn">Cerrar sesión</a></li>
                 {% else %}

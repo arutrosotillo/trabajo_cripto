@@ -95,3 +95,48 @@ nav {
     color: black;
     margin-bottom: 20px;
 }
+
+
+
+
+.formato-mensajes {
+    padding: 20px;
+    background-color: #f4f4f4;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.titulo-mensajes {
+    font-size: 54px;
+    font-weight: bold;
+    color: #333;
+}
+
+
+.elementos-tabla {
+    font-size: 24px;
+    font-weight: bold;
+    color: #333;
+}
+
+table.grande {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+table.grande th, table.grande td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: center; /* Centra el texto en las celdas */
+}
+
+table.grande th {
+    background-color: #f2f2f2;
+    color: #333;
+    text-align: center; /* Centra el texto en los encabezados */
+}
+
+table.grande td {
+    text-align: center; /* Centra el texto en las celdas */
+}

@@ -2,7 +2,8 @@ from flask import Flask, render_template, session, redirect, url_for, request, f
 import logging
 import sqlite3
 import bcrypt
-
+from Crypto.Cipher import AES # para cifrar y descifrar
+from Crypto.Random import get_random_bytes
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 
@@ -83,13 +84,45 @@ def submit_message():
     
     message = request.form['message']
 
+    # Aquí empieza la lógica para cifrar
+    key = get_random_bytes(32) # Use a stored / generated key
+    data = message.encode('utf-8')
+
+    cipher_encrypt = AES.new(key, AES.MODE_CFB) # Utiliza el modo CFB
+    ciphered_bytes = cipher_encrypt.encrypt(data)
+
+    # Esta son nuestros datos cifrados
+    iv = cipher_encrypt.iv
+    ciphered_data = ciphered_bytes
+
     # Aquí puedes agregar la lógica para guardar el mensaje en la base de datos
     conn = get_db_connection()
-    conn.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (session['user_id'], message))
+    conn.execute("INSERT INTO messages (user_id, message, iv) VALUES (?, ?, ?)", 
+                 (session['user_id'], ciphered_data, iv))
     conn.commit()
     conn.close()
     flash('Mensaje enviado con éxito', 'success')
     return redirect(url_for('index'))
+
+
+@app.route('/mensajes')
+def mensajes():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    conn = get_db_connection()
+    messages = conn.execute('''
+        SELECT users.username, messages.message 
+        FROM messages 
+        JOIN users ON messages.user_id = users.id
+    ''').fetchall()
+    conn.close()
+    
+    return render_template('mensajes.html', messages=messages)
+
+
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
