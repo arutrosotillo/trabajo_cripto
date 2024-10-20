@@ -4,14 +4,21 @@ import sqlite3
 import bcrypt
 from Crypto.Cipher import AES # para cifrar y descifrar
 from Crypto.Random import get_random_bytes
+
+
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
+
+
 
 def get_db_connection():
     conn = sqlite3.connect('database.db')
     conn.row_factory = sqlite3.Row
     return conn
 
+@app.context_processor #Esto es para que el header sepa en cualquier html si el usuario está logueado o no
+def inject_user():
+    return dict(is_logged_in='user_id' in session)
 
 @app.route('/')
 def index():
@@ -85,7 +92,7 @@ def submit_message():
     message = request.form['message']
 
     # Aquí empieza la lógica para cifrar
-    key = get_random_bytes(32) # Use a stored / generated key
+    key = b'123456789' # Use a stored / generated key
     data = message.encode('utf-8')
 
     cipher_encrypt = AES.new(key, AES.MODE_CFB) # Utiliza el modo CFB
@@ -119,6 +126,7 @@ def mensajes():
     conn.close()
     
     return render_template('mensajes.html', messages=messages)
+
 
 
 

@@ -96,9 +96,6 @@ nav {
     margin-bottom: 20px;
 }
 
-
-
-
 .formato-mensajes {
     padding: 20px;
     background-color: #f4f4f4;
@@ -112,11 +109,17 @@ nav {
     color: #333;
 }
 
-
 .elementos-tabla {
-    font-size: 24px;
-    font-weight: bold;
-    color: #333;
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    border: 1px solid #ddd;
+}
+
+.elementos-tabla th, .elementos-tabla td {
+    border: 1px solid #ddd; /* Asegura que las celdas también tengan bordes */
+    padding: 8px;
+    text-align: center; /* Centra el texto en las celdas */
 }
 
 table.grande {
@@ -139,4 +142,6 @@ table.grande th {
 
 table.grande td {
     text-align: center; /* Centra el texto en las celdas */
+    
 }
+
