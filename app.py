@@ -82,7 +82,12 @@ def submit_message():
         return redirect(url_for('login'))
     
     message = request.form['message']
+
     # Aquí puedes agregar la lógica para guardar el mensaje en la base de datos
+    conn = get_db_connection()
+    conn.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (session['user_id'], message))
+    conn.commit()
+    conn.close()
     flash('Mensaje enviado con éxito', 'success')
     return redirect(url_for('index'))
 
