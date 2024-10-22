@@ -7,11 +7,8 @@ import hashlib
 from Crypto.Cipher import AES # para cifrar y descifrar
 from Crypto.Random import get_random_bytes
 
-
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
-
-
 
 def get_db_connection():
     conn = sqlite3.connect('database.db')
