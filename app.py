@@ -92,7 +92,7 @@ def submit_message():
     message = request.form['message']
 
     # Aquí empieza la lógica para cifrar
-    key = b'123456789' # Use a stored / generated key
+    key = get_random_bytes(32) # Use a stored / generated key
     data = message.encode('utf-8')
 
     cipher_encrypt = AES.new(key, AES.MODE_CFB) # Utiliza el modo CFB
