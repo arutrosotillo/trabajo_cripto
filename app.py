@@ -2,6 +2,8 @@ from flask import Flask, render_template, session, redirect, url_for, request, f
 import logging
 import sqlite3
 import bcrypt
+import hmac
+import hashlib
 from Crypto.Cipher import AES # para cifrar y descifrar
 from Crypto.Random import get_random_bytes
 
@@ -44,7 +46,7 @@ def register():
             flash('Registro exitoso', 'success')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
-            flash('El nombre de usuario ya existe', 'danger')
+            flash('El nombre de usuario ya existe', 'danger') 
         finally:
             conn.close()
     
@@ -92,11 +94,14 @@ def submit_message():
     message = request.form['message']
 
     # Aquí empieza la lógica para cifrar
-    key = get_random_bytes(32) # Use a stored / generated key
+    key = b'123456789' # Use a stored / generated key
     data = message.encode('utf-8')
 
     cipher_encrypt = AES.new(key, AES.MODE_CFB) # Utiliza el modo CFB
     ciphered_bytes = cipher_encrypt.encrypt(data)
+    
+    # Creamos un HMAC para asegurarnos de que el mensaje no ha sido alterado
+    h = hmac.new(key, data, hashlib.sha256)
 
     # Esta son nuestros datos cifrados
     iv = cipher_encrypt.iv
@@ -104,8 +109,8 @@ def submit_message():
 
     # Aquí puedes agregar la lógica para guardar el mensaje en la base de datos
     conn = get_db_connection()
-    conn.execute("INSERT INTO messages (user_id, message, iv) VALUES (?, ?, ?)", 
-                 (session['user_id'], ciphered_data, iv))
+    conn.execute("INSERT INTO messages (user_id, message, iv, hmac) VALUES (?, ?, ?, ?)", 
+                 (session['user_id'], ciphered_data, iv, h.hexdigest()))
     conn.commit()
     conn.close()
     flash('Mensaje enviado con éxito', 'success')
@@ -126,6 +131,7 @@ def mensajes():
     conn.close()
     
     return render_template('mensajes.html', messages=messages)
+
 
 
 
