@@ -4,8 +4,7 @@ import sqlite3
 import bcrypt
 import hmac
 import hashlib
-from Crypto.Cipher import AES # para cifrar y descifrar
-from Crypto.Random import get_random_bytes
+from cryptography.fernet import Fernet
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
@@ -15,14 +14,14 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-@app.context_processor #Esto es para que el header sepa en cualquier html si el usuario está logueado o no
-def inject_user():
-    return dict(is_logged_in='user_id' in session)
+@app.context_processor
+def inject_is_logged_in():
+    return {'is_logged_in': 'user_id' in session}
 
 @app.route('/')
 def index():
-    is_logged_in = 'user_id' in session  # Suponiendo que guardas el ID del usuario en la sesión
-    return render_template('index.html', is_logged_in=is_logged_in)
+    return render_template('index.html')
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -43,7 +42,7 @@ def register():
             flash('Registro exitoso', 'success')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
-            flash('El nombre de usuario ya existe', 'danger') 
+            flash('El nombre de usuario ya existe', 'danger')
         finally:
             conn.close()
     
@@ -90,29 +89,21 @@ def submit_message():
     
     message = request.form['message']
 
-    # Aquí empieza la lógica para cifrar
-    key = b'123456789' # Use a stored / generated key
-    data = message.encode('utf-8')
+    # Aquí empieza la lógica para cifrar (USANDO FERNET)
+    key = Fernet.generate_key()
+    f = Fernet(key)
+    token = f.encrypt(message.encode('utf-8'))
 
-    cipher_encrypt = AES.new(key, AES.MODE_CFB) # Utiliza el modo CFB
-    ciphered_bytes = cipher_encrypt.encrypt(data)
-    
-    # Creamos un HMAC para asegurarnos de que el mensaje no ha sido alterado
-    h = hmac.new(key, data, hashlib.sha256)
-
-    # Esta son nuestros datos cifrados
-    iv = cipher_encrypt.iv
-    ciphered_data = ciphered_bytes
-
-    # Aquí puedes agregar la lógica para guardar el mensaje en la base de datos
+    descifrado = f.decrypt(token).decode('utf-8')
+    # Aquí termina la lógica para cifrar 
     conn = get_db_connection()
-    conn.execute("INSERT INTO messages (user_id, message, iv, hmac) VALUES (?, ?, ?, ?)", 
-                 (session['user_id'], ciphered_data, iv, h.hexdigest()))
+    conn.execute("INSERT INTO messages (user_id, message, descifrado) VALUES (?, ?, ?)", 
+                 (session['user_id'], token, descifrado))
     conn.commit()
     conn.close()
-    flash('Mensaje enviado con éxito', 'success')
+    flash('Mensaje enviado con éxito', 'success') 
     return redirect(url_for('index'))
-
+    
 
 @app.route('/mensajes')
 def mensajes():
@@ -121,7 +112,7 @@ def mensajes():
     
     conn = get_db_connection()
     messages = conn.execute('''
-        SELECT users.username, messages.message 
+        SELECT users.username, messages.message, messages.descifrado 
         FROM messages 
         JOIN users ON messages.user_id = users.id
     ''').fetchall()
@@ -129,7 +120,11 @@ def mensajes():
     
     return render_template('mensajes.html', messages=messages)
 
-
+# Esta funcion sera para comprobar que el mensaje no haya sido alterado con un hmac
+def verify_message(key, message, hmac_given):
+    hmac_verifier = hmac.new(key, message, hashlib.sha256)
+    return hmac_verifier.hexdigest() == hmac_given
+    
 
 
 

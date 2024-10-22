@@ -33,6 +33,7 @@
                     <th>Usuario</th>
                     <th>Mensaje Cifrado</th>
                     <th>Descifrar</th>
+                    <th>Mensaje Descifrado</th>
                 </tr>
             </thead>
             <tbody>
@@ -41,6 +42,7 @@
                     <td>{{ message.username }}</td>
                     <td>{{ message.message }}</td>
                     <td><a href="#" class="btn">Descifrar</a></td>
+                    <td>{{ message.descifrado }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
