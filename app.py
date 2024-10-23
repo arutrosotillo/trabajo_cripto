@@ -101,14 +101,15 @@ def submit_message():
     # Aquí empieza la lógica para cifrar (USANDO FERNET)
     f = Fernet(key)
     token = f.encrypt(message.encode('utf-8'))
-
+    h = hmac.new(key, token, hashlib.sha256)
+    
     # Verifica qué se está almacenando
     print(f"Mensaje cifrado (bytes): {token}")
     print(f"Tipo de dato del mensaje cifrado: {type(token)}")
 
     conn = get_db_connection()
-    conn.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", 
-                 (session['user_id'], token))
+    conn.execute("INSERT INTO messages (user_id, message, hmac) VALUES (?, ?, ?)", 
+                 (session['user_id'], token, h.hexdigest()))
     conn.commit()
     conn.close()
     flash('Mensaje enviado con éxito', 'success') 
@@ -143,23 +144,29 @@ def decrypt(message_id):
 
         # Usar la clave global para descifrar
         f = Fernet(key)
-        try:
-            decrypted_message = f.decrypt(encrypted_message)
-            print(f"Mensaje descifrado correctamente: {decrypted_message.decode('utf-8')}")
+        
+        if verify_message(key, encrypted_message, message['hmac']):
+        
+            try:
+                decrypted_message = f.decrypt(encrypted_message)
+                print(f"Mensaje descifrado correctamente: {decrypted_message.decode('utf-8')}")
 
-            conn = get_db_connection()
-            messages = conn.execute('''
-                SELECT message_id, users.username, messages.message
-                FROM messages 
-                JOIN users ON messages.user_id = users.id
-            ''').fetchall()
-            conn.close()
+                conn = get_db_connection()
+                messages = conn.execute('''
+                    SELECT message_id, users.username, messages.message
+                    FROM messages 
+                    JOIN users ON messages.user_id = users.id
+                ''').fetchall()
+                conn.close()
 
-            return render_template('mensajes.html', messages=messages, decrypted_message=decrypted_message.decode('utf-8'), decrypted_message_id=message_id)
-        except Exception as e:
-            print(f"Error al descifrar el mensaje: {str(e)}")
-            flash("Error al descifrar el mensaje.", 'danger')
-            return redirect(url_for('mensajes'))
+                return render_template('mensajes.html', messages=messages, decrypted_message=decrypted_message.decode('utf-8'), decrypted_message_id=message_id)
+            except Exception as e:
+                print(f"Error al descifrar el mensaje: {str(e)}")
+                flash("Error al descifrar el mensaje.", 'danger')
+                return redirect(url_for('mensajes'))
+            
+        else:
+            print("El mensaje ha sido alterado")
     else:
         print("Mensaje no encontrado en la base de datos")
         flash("Mensaje no encontrado.", 'danger')
