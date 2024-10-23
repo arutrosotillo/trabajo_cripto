@@ -41,11 +41,24 @@
                 <tr>
                     <td>{{ message.username }}</td>
                     <td>{{ message.message }}</td>
-                    <td><a href="#" class="btn">Descifrar</a></td>
-                    <td>{{ message.descifrado }}</td>
+                    <td>
+                        <form action="{{ url_for('decrypt', message_id=message.message_id) }}" method="POST">
+                            <button type="submit" class="btn">Descifrar</button>
+                        </form>
+                    </td>
+                    <td>
+                        {% if decrypted_message_id == message.message_id %}
+                            {{ decrypted_message }}
+                        {% else %}
+                            No descifrado
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
+            
+                     
+            
         </table>
     </section>
 </body>

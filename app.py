@@ -5,9 +5,14 @@ import bcrypt
 import hmac
 import hashlib
 from cryptography.fernet import Fernet
+import base64
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
+
+# Cargar la clave desde el archivo en lugar de generar una nueva cada vez
+with open('key.key', 'rb') as key_file:
+    key = key_file.read()
 
 def get_db_connection():
     conn = sqlite3.connect('database.db')
@@ -89,36 +94,95 @@ def submit_message():
     
     message = request.form['message']
 
+    # Cargar la clave desde el archivo
+    with open('key.key', 'rb') as key_file:
+        key = key_file.read()
+
     # Aquí empieza la lógica para cifrar (USANDO FERNET)
-    key = Fernet.generate_key()
     f = Fernet(key)
     token = f.encrypt(message.encode('utf-8'))
 
-    descifrado = f.decrypt(token).decode('utf-8')
-    # Aquí termina la lógica para cifrar 
+    # Verifica qué se está almacenando
+    print(f"Mensaje cifrado (bytes): {token}")
+    print(f"Tipo de dato del mensaje cifrado: {type(token)}")
+
     conn = get_db_connection()
-    conn.execute("INSERT INTO messages (user_id, message, descifrado) VALUES (?, ?, ?)", 
-                 (session['user_id'], token, descifrado))
+    conn.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", 
+                 (session['user_id'], token))
     conn.commit()
     conn.close()
     flash('Mensaje enviado con éxito', 'success') 
     return redirect(url_for('index'))
-    
+
+
+
+@app.route('/decrypt/<int:message_id>', methods=['POST'])
+def decrypt(message_id):
+    print("Estoy dentro de la función decrypt")
+
+    if 'user_id' not in session:
+        flash('Debes iniciar sesión para descifrar mensajes.', 'danger')
+        return redirect(url_for('login'))
+
+    conn = get_db_connection()
+    user = conn.execute("SELECT username FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+
+    if user['username'] != 'joerogan':
+        flash("No tienes permisos para descifrar este mensaje.", 'danger')
+        return redirect(url_for('mensajes'))
+
+    # Obtener el mensaje cifrado de la base de datos usando message_id
+    message = conn.execute("SELECT message FROM messages WHERE message_id = ?", (message_id,)).fetchone()
+    conn.close()
+
+    if message:
+        # Verificar el mensaje cifrado recuperado
+        encrypted_message = message['message']
+        print(f"Mensaje cifrado recuperado: {encrypted_message}")
+        print(f"Tipo de dato del mensaje cifrado recuperado: {type(encrypted_message)}")
+
+        # Usar la clave global para descifrar
+        f = Fernet(key)
+        try:
+            decrypted_message = f.decrypt(encrypted_message)
+            print(f"Mensaje descifrado correctamente: {decrypted_message.decode('utf-8')}")
+
+            conn = get_db_connection()
+            messages = conn.execute('''
+                SELECT message_id, users.username, messages.message
+                FROM messages 
+                JOIN users ON messages.user_id = users.id
+            ''').fetchall()
+            conn.close()
+
+            return render_template('mensajes.html', messages=messages, decrypted_message=decrypted_message.decode('utf-8'), decrypted_message_id=message_id)
+        except Exception as e:
+            print(f"Error al descifrar el mensaje: {str(e)}")
+            flash("Error al descifrar el mensaje.", 'danger')
+            return redirect(url_for('mensajes'))
+    else:
+        print("Mensaje no encontrado en la base de datos")
+        flash("Mensaje no encontrado.", 'danger')
+        return redirect(url_for('mensajes'))
+
+
 
 @app.route('/mensajes')
 def mensajes():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    
+
     conn = get_db_connection()
     messages = conn.execute('''
-        SELECT users.username, messages.message, messages.descifrado 
+        SELECT message_id, users.username, messages.message
         FROM messages 
         JOIN users ON messages.user_id = users.id
     ''').fetchall()
     conn.close()
-    
+
     return render_template('mensajes.html', messages=messages)
+
+
 
 # Esta funcion sera para comprobar que el mensaje no haya sido alterado con un hmac
 def verify_message(key, message, hmac_given):
