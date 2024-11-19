@@ -40,7 +40,8 @@
                 {% for message in messages %}
                 <tr>
                     <td>{{ message.username }}</td>
-                    <td>{{ message.message }}</td>
+                    <!-- Mostrar solo los primeros 30 caracteres del mensaje cifrado -->
+                    <td>{{ message.message[:30] }}...</td>
                     <td>
                         <form action="{{ url_for('decrypt', message_id=message.message_id) }}" method="POST">
                             <button type="submit" class="btn">Descifrar</button>
@@ -56,9 +57,6 @@
                 </tr>
                 {% endfor %}
             </tbody>
-            
-                     
-            
         </table>
     </section>
 </body>

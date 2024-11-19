@@ -6,13 +6,25 @@ import hmac
 import hashlib
 from cryptography.fernet import Fernet
 import base64
+import os
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
+from generate_and_store_hmac_key import load_key
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 
-# Cargar la clave desde el archivo en lugar de generar una nueva cada vez
-with open('key.key', 'rb') as key_file:
-    key = key_file.read()
+# Define the directory where keys will be stored
+KEYS_DIR = "KEYS_DIR"
+
+# Ensure the directory exists
+os.makedirs(KEYS_DIR, exist_ok=True)
+
+# Cargar la clave secreta para HMAC
+try:
+    secret_key = load_key()
+except FileNotFoundError:
+    raise ValueError("Clave secreta no encontrada. Por favor, genera una usando generate_and_store_key.py.")
 
 def get_db_connection():
     conn = sqlite3.connect('database.db')
@@ -26,6 +38,41 @@ def inject_is_logged_in():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+def generate_user_keys(username: str):
+    """Generate and store a key pair for a user."""
+    # Generate a private key
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    # Save the private key to a file (USERS LOCAL DEVICE)
+    private_key_file = os.path.join(KEYS_DIR, f"{username}_private_key.pem")
+    with open(private_key_file, "wb") as private_file:
+        private_file.write(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+    
+    # Generate and store the public key
+    public_key = private_key.public_key()
+    public_key_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    # Save the public key to the database
+    conn = get_db_connection()
+    conn.execute("UPDATE users SET public_key = ? WHERE username = ?", (public_key_pem.decode("utf-8"), username))
+    conn.commit()
+    conn.close()
+    print(f"Public key stored for user: {username}")
+
 
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -44,6 +91,8 @@ def register():
         try:
             conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
             conn.commit()
+            # Generar y almacenar las claves de cifrado para el usuario
+            generate_user_keys(username)
             flash('Registro exitoso', 'success')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
@@ -87,6 +136,7 @@ def logout():
     flash('Has cerrado sesión', 'success')
     return redirect(url_for('index'))
 
+
 @app.route('/submit_message', methods=['POST'])
 def submit_message():
     if 'user_id' not in session:
@@ -94,33 +144,50 @@ def submit_message():
     
     message = request.form['message']
 
-    # Cargar la clave desde el archivo
-    with open('key.key', 'rb') as key_file:
-        key = key_file.read()
+    try:
+        # Extraer clave pública de Joe Rogan
+        conn = get_db_connection()
+        cursor = conn.execute("SELECT public_key FROM users WHERE username = ?", ("Joe Rogan",))
+        result = cursor.fetchone()
 
-    # Aquí empieza la lógica para cifrar (USANDO FERNET)
-    f = Fernet(key)
-    token = f.encrypt(message.encode('utf-8'))
-    # h = hmac.new(key, token, hashlib.sha256)
-    
-    # Verifica qué se está almacenando
-    print(f"Mensaje cifrado (bytes): {token}")
-    print(f"Tipo de dato del mensaje cifrado: {type(token)}")
+        if result is None:
+            raise ValueError(f"No public key found for user {'Joe Rogan'}.")
+        
+        public_key_pem = result[0]  # Assuming the public_key column stores the PEM-encoded key as text
+        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
 
-    conn = get_db_connection()
-    conn.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", 
-                 (session['user_id'], token,)) # h.hexdigest()))
-    conn.commit()
-    conn.close()
+        # Encrypt the message using the recipient's public key
+        encrypted_message = public_key.encrypt(
+            message.encode("utf-8"),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        # Generar HMAC del mensaje cifrado
+        h = hmac.new(secret_key, encrypted_message, hashlib.sha256)
+        message_hmac = h.hexdigest()  # HMAC en formato hexadecimal
+
+        # Guardar mensaje cifrado y HMAC en la base de datos
+        conn.execute(
+            "INSERT INTO messages (user_id, message, hmac) VALUES (?, ?, ?)",
+            (session['user_id'], encrypted_message, message_hmac),
+        )
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        raise ValueError(f"Failed to encrypt message for {"Joe Rogan"}: {e}")
+
+
     flash('Mensaje enviado con éxito', 'success') 
     return redirect(url_for('index'))
 
 
-
 @app.route('/decrypt/<int:message_id>', methods=['POST'])
 def decrypt(message_id):
-    print("Estoy dentro de la función decrypt")
-
     if 'user_id' not in session:
         flash('Debes iniciar sesión para descifrar mensajes.', 'danger')
         return redirect(url_for('login'))
@@ -128,28 +195,51 @@ def decrypt(message_id):
     conn = get_db_connection()
     user = conn.execute("SELECT username FROM users WHERE id = ?", (session['user_id'],)).fetchone()
 
-    if user['username'] != 'joerogan':
+    if user['username'] != 'Joe Rogan':
         flash("No tienes permisos para descifrar este mensaje.", 'danger')
         return redirect(url_for('mensajes'))
 
-    # Obtener el mensaje cifrado de la base de datos usando message_id
-    message = conn.execute("SELECT message FROM messages WHERE message_id = ?", (message_id,)).fetchone()
+    # Obtener el mensaje cifrado y el HMAC de la base de datos
+    result = conn.execute(
+        "SELECT message, hmac FROM messages WHERE message_id = ?", 
+        (message_id,)
+    ).fetchone()
     conn.close()
 
-    if message:
-        # Verificar el mensaje cifrado recuperado
-        encrypted_message = message['message']
-        print(f"Mensaje cifrado recuperado: {encrypted_message}")
-        print(f"Tipo de dato del mensaje cifrado recuperado: {type(encrypted_message)}")
+    if result:
+        encrypted_message = result['message']
+        stored_hmac = result['hmac']
 
-        # Usar la clave global para descifrar
-        f = Fernet(key)
-        
-        # if verify_message(key, encrypted_message, message['hmac']):
-    
+        # Verificar HMAC del mensaje cifrado
+        h = hmac.new(secret_key, encrypted_message, hashlib.sha256)
+        calculated_hmac = h.hexdigest()
+
+        if not hmac.compare_digest(stored_hmac, calculated_hmac):
+            flash("Error: La autenticidad del mensaje no pudo ser verificada.", 'danger')
+            return redirect(url_for('mensajes'))
+
+        # Continuar con el descifrado si el HMAC es válido
+        private_key_file = os.path.join(KEYS_DIR, f"{user['username']}_private_key.pem")
+        if not os.path.exists(private_key_file):
+            raise ValueError(f"No private key file found for user {user}.")
+
         try:
-            decrypted_message = f.decrypt(encrypted_message)
-            print(f"Mensaje descifrado correctamente: {decrypted_message.decode('utf-8')}")
+            # Cargar la clave privada
+            with open(private_key_file, "rb") as file:
+                private_key = serialization.load_pem_private_key(
+                    file.read(),
+                    password=None,
+                )
+
+            # Descifrar el mensaje
+            decrypted_message = private_key.decrypt(
+                encrypted_message,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
 
             conn = get_db_connection()
             messages = conn.execute('''
@@ -159,19 +249,20 @@ def decrypt(message_id):
             ''').fetchall()
             conn.close()
 
-            return render_template('mensajes.html', messages=messages, decrypted_message=decrypted_message.decode('utf-8'), decrypted_message_id=message_id)
+            return render_template(
+                'mensajes.html', 
+                messages=messages, 
+                decrypted_message=decrypted_message.decode('utf-8'), 
+                decrypted_message_id=message_id
+            )
         except Exception as e:
             print(f"Error al descifrar el mensaje: {str(e)}")
             flash("Error al descifrar el mensaje.", 'danger')
             return redirect(url_for('mensajes'))
-        
-        # else:
-        #     print("El mensaje ha sido alterado")
     else:
         print("Mensaje no encontrado en la base de datos")
         flash("Mensaje no encontrado.", 'danger')
         return redirect(url_for('mensajes'))
-
 
 
 @app.route('/mensajes')
@@ -188,16 +279,6 @@ def mensajes():
     conn.close()
 
     return render_template('mensajes.html', messages=messages)
-
-
-
-# # Esta funcion sera para comprobar que el mensaje no haya sido alterado con un hmac
-# def verify_message(key, message, hmac_given):
-#     hmac_verifier = hmac.new(key, message, hashlib.sha256)
-#     return hmac_verifier.hexdigest() == hmac_given
-    
-
-
 
 
 
