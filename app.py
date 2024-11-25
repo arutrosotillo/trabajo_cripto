@@ -10,6 +10,17 @@ import os
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from generate_and_store_hmac_key import load_key
+import logging
+
+
+# Configuración de logging (mensajes en la terminal)
+logging.basicConfig(
+    level=logging.DEBUG,  # Captura todos los mensajes desde DEBUG hacia arriba
+    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
+    handlers=[
+        logging.StreamHandler()  # Envía los logs a la terminal
+    ]
+)
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
@@ -45,8 +56,10 @@ def generate_user_keys(username: str):
     # Generate a private key
     private_key = rsa.generate_private_key(
         public_exponent=65537,
-        key_size=2048,
+        key_size=2048,  # Longitud de la clave
     )
+
+    logging.info(f"Generando claves RSA de 2048 bits para el usuario: {username}")
 
     # Save the private key to a file (USERS LOCAL DEVICE)
     private_key_file = os.path.join(KEYS_DIR, f"{username}_private_key.pem")
@@ -58,6 +71,7 @@ def generate_user_keys(username: str):
                 encryption_algorithm=serialization.NoEncryption(),
             )
         )
+    logging.debug(f"Clave privada almacenada en: {private_key_file}")
     
     # Generate and store the public key
     public_key = private_key.public_key()
@@ -71,8 +85,58 @@ def generate_user_keys(username: str):
     conn.execute("UPDATE users SET public_key = ? WHERE username = ?", (public_key_pem.decode("utf-8"), username))
     conn.commit()
     conn.close()
-    print(f"Public key stored for user: {username}")
+    logging.info(f"Clave pública almacenada en la base de datos para el usuario: {username}")
 
+
+
+def generate_signature(message: str, private_key_path: str) -> bytes:
+    """
+    Genera una firma digital para un mensaje utilizando una clave privada.
+    :param message: El mensaje que será firmado.
+    :param private_key_path: Ruta de la clave privada para firmar.
+    :return: La firma generada en formato bytes.
+    """
+    with open(private_key_path, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=None
+        )
+    signature = private_key.sign(
+        message.encode("utf-8"),
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+    logging.debug(f"Firma digital generada utilizando RSA con padding PSS, MGF1 y algoritmo SHA-256.")
+    return signature
+
+
+def verify_signature(message: str, signature: bytes, public_key_pem: str) -> bool:
+    """
+    Verifica una firma digital utilizando la clave pública del remitente.
+    :param message: El mensaje original.
+    :param signature: La firma digital que será verificada.
+    :param public_key_pem: Clave pública en formato PEM.
+    :return: True si la firma es válida, False si no.
+    """
+    public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+    try:
+        public_key.verify(
+            signature,
+            message.encode("utf-8"),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        logging.info("Firma digital verificada con éxito.")
+        return True
+    except Exception as e:
+        logging.error(f"Error verificando la firma: {e}")
+        return False
 
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -143,20 +207,28 @@ def submit_message():
         return redirect(url_for('login'))
     
     message = request.form['message']
+    user_id = session['user_id']
+    conn = get_db_connection()
+    user = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
 
     try:
-        # Extraer clave pública de Joe Rogan
-        conn = get_db_connection()
+        # Generar la firma digital
+        private_key_path = os.path.join(KEYS_DIR, f"{user['username']}_private_key.pem")
+        if not os.path.exists(private_key_path):
+            raise ValueError("Clave privada no encontrada para el usuario actual.")
+
+        signature = generate_signature(message, private_key_path)
+
+        # Cifrar el mensaje para Joe Rogan
         cursor = conn.execute("SELECT public_key FROM users WHERE username = ?", ("Joe Rogan",))
         result = cursor.fetchone()
 
         if result is None:
-            raise ValueError(f"No public key found for user {'Joe Rogan'}.")
-        
-        public_key_pem = result[0]  # Assuming the public_key column stores the PEM-encoded key as text
+            raise ValueError("Clave pública de Joe Rogan no encontrada.")
+
+        public_key_pem = result[0]
         public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
 
-        # Encrypt the message using the recipient's public key
         encrypted_message = public_key.encrypt(
             message.encode("utf-8"),
             padding.OAEP(
@@ -166,24 +238,25 @@ def submit_message():
             ),
         )
 
-        # Generar HMAC del mensaje cifrado
+        # Guardar mensaje cifrado, HMAC y firma en la base de datos
         h = hmac.new(secret_key, encrypted_message, hashlib.sha256)
-        message_hmac = h.hexdigest()  # HMAC en formato hexadecimal
+        message_hmac = h.hexdigest()
 
-        # Guardar mensaje cifrado y HMAC en la base de datos
         conn.execute(
-            "INSERT INTO messages (user_id, message, hmac) VALUES (?, ?, ?)",
-            (session['user_id'], encrypted_message, message_hmac),
+            "INSERT INTO messages (user_id, message, hmac, signature) VALUES (?, ?, ?, ?)",
+            (user_id, encrypted_message, message_hmac, signature.hex()),
         )
         conn.commit()
         conn.close()
 
     except Exception as e:
-        raise ValueError(f"Failed to encrypt message for {"Joe Rogan"}: {e}")
+        logging.error(f"Error en submit_message: {e}")
+        flash('Error enviando el mensaje.', 'danger')
+        return redirect(url_for('index'))
 
-
-    flash('Mensaje enviado con éxito', 'success') 
+    flash('Mensaje enviado y firmado con éxito.', 'success')
     return redirect(url_for('index'))
+
 
 
 @app.route('/decrypt/<int:message_id>', methods=['POST'])
@@ -199,9 +272,9 @@ def decrypt(message_id):
         flash("No tienes permisos para descifrar este mensaje.", 'danger')
         return redirect(url_for('mensajes'))
 
-    # Obtener el mensaje cifrado y el HMAC de la base de datos
+    # Obtener el mensaje cifrado, HMAC, firma y usuario emisor de la base de datos
     result = conn.execute(
-        "SELECT message, hmac FROM messages WHERE message_id = ?", 
+        "SELECT message, hmac, signature, user_id FROM messages WHERE message_id = ?",
         (message_id,)
     ).fetchone()
     conn.close()
@@ -209,6 +282,8 @@ def decrypt(message_id):
     if result:
         encrypted_message = result['message']
         stored_hmac = result['hmac']
+        signature = bytes.fromhex(result['signature'])
+        sender_id = result['user_id']
 
         # Verificar HMAC del mensaje cifrado
         h = hmac.new(secret_key, encrypted_message, hashlib.sha256)
@@ -218,13 +293,13 @@ def decrypt(message_id):
             flash("Error: La autenticidad del mensaje no pudo ser verificada.", 'danger')
             return redirect(url_for('mensajes'))
 
-        # Continuar con el descifrado si el HMAC es válido
+        # Descifrar el mensaje
         private_key_file = os.path.join(KEYS_DIR, f"{user['username']}_private_key.pem")
         if not os.path.exists(private_key_file):
-            raise ValueError(f"No private key file found for user {user}.")
+            raise ValueError(f"No private key file found for user {user['username']}.")
 
         try:
-            # Cargar la clave privada
+            # Cargar la clave privada de Joe Rogan
             with open(private_key_file, "rb") as file:
                 private_key = serialization.load_pem_private_key(
                     file.read(),
@@ -239,8 +314,26 @@ def decrypt(message_id):
                     algorithm=hashes.SHA256(),
                     label=None,
                 ),
-            )
+            ).decode("utf-8")
 
+            # Verificar la firma digital
+            conn = get_db_connection()
+            result = conn.execute("SELECT public_key FROM users WHERE id = ?", (sender_id,)).fetchone()
+            conn.close()
+
+            if not result:
+                flash("No se encontró la clave pública del emisor.", 'danger')
+                return redirect(url_for('mensajes'))
+
+            sender_public_key_pem = result['public_key']
+
+            if not verify_signature(decrypted_message, signature, sender_public_key_pem):
+                flash("Error: La firma digital no es válida.", 'danger')
+                return redirect(url_for('mensajes'))
+
+            flash("Mensaje descifrado y firma verificada con éxito.", 'success')
+
+            # Mostrar mensajes descifrados
             conn = get_db_connection()
             messages = conn.execute('''
                 SELECT message_id, users.username, messages.message
@@ -252,15 +345,17 @@ def decrypt(message_id):
             return render_template(
                 'mensajes.html', 
                 messages=messages, 
-                decrypted_message=decrypted_message.decode('utf-8'), 
+                decrypted_message=decrypted_message, 
                 decrypted_message_id=message_id
             )
+
         except Exception as e:
-            print(f"Error al descifrar el mensaje: {str(e)}")
+            logging.error(f"Error al descifrar el mensaje: {e}")
             flash("Error al descifrar el mensaje.", 'danger')
             return redirect(url_for('mensajes'))
+
     else:
-        print("Mensaje no encontrado en la base de datos")
+        logging.error("Mensaje no encontrado en la base de datos")
         flash("Mensaje no encontrado.", 'danger')
         return redirect(url_for('mensajes'))
 
