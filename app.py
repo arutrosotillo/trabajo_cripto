@@ -52,40 +52,64 @@ def index():
 
 
 def generate_user_keys(username: str):
-    """Generate and store a key pair for a user."""
-    # Generate a private key
-    private_key = rsa.generate_private_key(
+    """Generate and store two key pairs for a user: one for encryption and one for signing."""
+    # Generar par de claves para cifrado
+    private_key_encrypt = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,  # Longitud de la clave
     )
+    public_key_encrypt = private_key_encrypt.public_key()
 
-    logging.info(f"Generando claves RSA de 2048 bits para el usuario: {username}")
+    # Generar par de claves para firma
+    private_key_signature = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,  # Longitud de la clave
+    )
+    public_key_signature = private_key_signature.public_key()
 
-    # Save the private key to a file (USERS LOCAL DEVICE)
-    private_key_file = os.path.join(KEYS_DIR, f"{username}_private_key.pem")
-    with open(private_key_file, "wb") as private_file:
-        private_file.write(
-            private_key.private_bytes(
+    # Guardar claves privadas en archivos
+    private_key_encrypt_file = os.path.join(KEYS_DIR, f"{username}_private_key_encrypt.pem")
+    with open(private_key_encrypt_file, "wb") as file:
+        file.write(
+            private_key_encrypt.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption(),
             )
         )
-    logging.debug(f"Clave privada almacenada en: {private_key_file}")
-    
-    # Generate and store the public key
-    public_key = private_key.public_key()
-    public_key_pem = public_key.public_bytes(
+    logging.debug(f"Clave privada de cifrado almacenada en: {private_key_encrypt_file}")
+
+    private_key_signature_file = os.path.join(KEYS_DIR, f"{username}_private_key_signature.pem")
+    with open(private_key_signature_file, "wb") as file:
+        file.write(
+            private_key_signature.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+    logging.debug(f"Clave privada de firma almacenada en: {private_key_signature_file}")
+
+    # Convertir claves públicas a PEM
+    public_key_encrypt_pem = public_key_encrypt.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    public_key_signature_pem = public_key_signature.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
 
-    # Save the public key to the database
+    # Guardar claves públicas en la base de datos
     conn = get_db_connection()
-    conn.execute("UPDATE users SET public_key = ? WHERE username = ?", (public_key_pem.decode("utf-8"), username))
+    conn.execute(
+        "UPDATE users SET public_key_encrypt = ?, public_key_signature = ? WHERE username = ?",
+        (public_key_encrypt_pem.decode("utf-8"), public_key_signature_pem.decode("utf-8"), username)
+    )
     conn.commit()
     conn.close()
-    logging.info(f"Clave pública almacenada en la base de datos para el usuario: {username}")
+
+    logging.info(f"Claves públicas de cifrado y firma almacenadas en la base de datos para el usuario: {username}")
 
 
 
@@ -212,24 +236,24 @@ def submit_message():
     user = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
 
     try:
-        # Generar la firma digital
-        private_key_path = os.path.join(KEYS_DIR, f"{user['username']}_private_key.pem")
-        if not os.path.exists(private_key_path):
-            raise ValueError("Clave privada no encontrada para el usuario actual.")
+        # Generar la firma digital usando clave privada de firma
+        private_key_signature_path = os.path.join(KEYS_DIR, f"{user['username']}_private_key_signature.pem")
+        if not os.path.exists(private_key_signature_path):
+            raise ValueError("Clave privada de firma no encontrada para el usuario actual.")
 
-        signature = generate_signature(message, private_key_path)
+        signature = generate_signature(message, private_key_signature_path)
 
-        # Cifrar el mensaje para Joe Rogan
-        cursor = conn.execute("SELECT public_key FROM users WHERE username = ?", ("Joe Rogan",))
+        # Cifrar el mensaje para Joe Rogan usando su clave pública de cifrado
+        cursor = conn.execute("SELECT public_key_encrypt FROM users WHERE username = ?", ("Joe Rogan",))
         result = cursor.fetchone()
 
         if result is None:
-            raise ValueError("Clave pública de Joe Rogan no encontrada.")
+            raise ValueError("Clave pública de cifrado de Joe Rogan no encontrada.")
 
-        public_key_pem = result[0]
-        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+        public_key_encrypt_pem = result[0]
+        public_key_encrypt = serialization.load_pem_public_key(public_key_encrypt_pem.encode("utf-8"))
 
-        encrypted_message = public_key.encrypt(
+        encrypted_message = public_key_encrypt.encrypt(
             message.encode("utf-8"),
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
@@ -256,7 +280,6 @@ def submit_message():
 
     flash('Mensaje enviado y firmado con éxito.', 'success')
     return redirect(url_for('index'))
-
 
 
 @app.route('/decrypt/<int:message_id>', methods=['POST'])
@@ -293,20 +316,18 @@ def decrypt(message_id):
             flash("Error: La autenticidad del mensaje no pudo ser verificada.", 'danger')
             return redirect(url_for('mensajes'))
 
-        # Descifrar el mensaje
-        private_key_file = os.path.join(KEYS_DIR, f"{user['username']}_private_key.pem")
+        # Descifrar el mensaje con la clave privada de cifrado
+        private_key_file = os.path.join(KEYS_DIR, f"{user['username']}_private_key_encrypt.pem")
         if not os.path.exists(private_key_file):
-            raise ValueError(f"No private key file found for user {user['username']}.")
+            raise ValueError(f"No se encontró la clave privada de cifrado para {user['username']}.")
 
         try:
-            # Cargar la clave privada de Joe Rogan
             with open(private_key_file, "rb") as file:
                 private_key = serialization.load_pem_private_key(
                     file.read(),
                     password=None,
                 )
 
-            # Descifrar el mensaje
             decrypted_message = private_key.decrypt(
                 encrypted_message,
                 padding.OAEP(
@@ -316,16 +337,16 @@ def decrypt(message_id):
                 ),
             ).decode("utf-8")
 
-            # Verificar la firma digital
+            # Verificar la firma digital usando clave pública del remitente
             conn = get_db_connection()
-            result = conn.execute("SELECT public_key FROM users WHERE id = ?", (sender_id,)).fetchone()
+            result = conn.execute("SELECT public_key_signature FROM users WHERE id = ?", (sender_id,)).fetchone()
             conn.close()
 
             if not result:
-                flash("No se encontró la clave pública del emisor.", 'danger')
+                flash("No se encontró la clave pública de firma del emisor.", 'danger')
                 return redirect(url_for('mensajes'))
 
-            sender_public_key_pem = result['public_key']
+            sender_public_key_pem = result['public_key_signature']
 
             if not verify_signature(decrypted_message, signature, sender_public_key_pem):
                 flash("Error: La firma digital no es válida.", 'danger')
