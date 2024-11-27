@@ -2,15 +2,14 @@ from flask import Flask, render_template, session, redirect, url_for, request, f
 import logging
 import sqlite3
 import bcrypt
-import hmac
 import hashlib
 from cryptography.fernet import Fernet
 import base64
 import os
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
-from generate_and_store_hmac_key import load_key
 import logging
+from cryptography.fernet import Fernet
 
 
 # Configuración de logging (mensajes en la terminal)
@@ -30,12 +29,6 @@ KEYS_DIR = "KEYS_DIR"
 
 # Ensure the directory exists
 os.makedirs(KEYS_DIR, exist_ok=True)
-
-# Cargar la clave secreta para HMAC
-try:
-    secret_key = load_key()
-except FileNotFoundError:
-    raise ValueError("Clave secreta no encontrada. Por favor, genera una usando generate_and_store_key.py.")
 
 def get_db_connection():
     conn = sqlite3.connect('database.db')
@@ -243,7 +236,15 @@ def submit_message():
 
         signature = generate_signature(message, private_key_signature_path)
 
-        # Cifrar el mensaje para Joe Rogan usando su clave pública de cifrado
+        # Generar una clave simétrica para cifrar el mensaje
+        symmetric_key = Fernet.generate_key()
+        fernet_cipher = Fernet(symmetric_key)
+
+        # Cifrar el mensaje con la clave simétrica
+        encrypted_message = fernet_cipher.encrypt(message.encode('utf-8'))
+
+        print("Se ha cifrado bien el mensaje")
+        # Cifrar la clave simétrica con la clave pública de Joe Rogan
         cursor = conn.execute("SELECT public_key_encrypt FROM users WHERE username = ?", ("Joe Rogan",))
         result = cursor.fetchone()
 
@@ -253,22 +254,19 @@ def submit_message():
         public_key_encrypt_pem = result[0]
         public_key_encrypt = serialization.load_pem_public_key(public_key_encrypt_pem.encode("utf-8"))
 
-        encrypted_message = public_key_encrypt.encrypt(
-            message.encode("utf-8"),
+        encrypted_symmetric_key = public_key_encrypt.encrypt(
+            symmetric_key,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
         )
-
-        # Guardar mensaje cifrado, HMAC y firma en la base de datos
-        h = hmac.new(secret_key, encrypted_message, hashlib.sha256)
-        message_hmac = h.hexdigest()
-
+        print("se ha cifrado bien la clave simetrica")
+        # Guardar mensaje cifrado, firma y clave cifrada en la base de datos
         conn.execute(
-            "INSERT INTO messages (user_id, message, hmac, signature) VALUES (?, ?, ?, ?)",
-            (user_id, encrypted_message, message_hmac, signature.hex()),
+            "INSERT INTO messages (user_id, message, signature, encrypted_key) VALUES (?, ?, ?, ?)",
+            (user_id, encrypted_message, signature.hex(), encrypted_symmetric_key),
         )
         conn.commit()
         conn.close()
@@ -280,6 +278,7 @@ def submit_message():
 
     flash('Mensaje enviado y firmado con éxito.', 'success')
     return redirect(url_for('index'))
+
 
 
 @app.route('/decrypt/<int:message_id>', methods=['POST'])
@@ -295,28 +294,21 @@ def decrypt(message_id):
         flash("No tienes permisos para descifrar este mensaje.", 'danger')
         return redirect(url_for('mensajes'))
 
-    # Obtener el mensaje cifrado, HMAC, firma y usuario emisor de la base de datos
+    # Obtener el mensaje cifrado, clave cifrada, firma y usuario emisor de la base de datos
     result = conn.execute(
-        "SELECT message, hmac, signature, user_id FROM messages WHERE message_id = ?",
+        "SELECT message, encrypted_key, signature, user_id FROM messages WHERE message_id = ?",
         (message_id,)
     ).fetchone()
     conn.close()
 
     if result:
         encrypted_message = result['message']
-        stored_hmac = result['hmac']
+        encrypted_key = result['encrypted_key']
         signature = bytes.fromhex(result['signature'])
         sender_id = result['user_id']
 
-        # Verificar HMAC del mensaje cifrado
-        h = hmac.new(secret_key, encrypted_message, hashlib.sha256)
-        calculated_hmac = h.hexdigest()
 
-        if not hmac.compare_digest(stored_hmac, calculated_hmac):
-            flash("Error: La autenticidad del mensaje no pudo ser verificada.", 'danger')
-            return redirect(url_for('mensajes'))
-
-        # Descifrar el mensaje con la clave privada de cifrado
+        # Descifrar la clave simétrica con la clave privada de Joe Rogan
         private_key_file = os.path.join(KEYS_DIR, f"{user['username']}_private_key_encrypt.pem")
         if not os.path.exists(private_key_file):
             raise ValueError(f"No se encontró la clave privada de cifrado para {user['username']}.")
@@ -328,14 +320,18 @@ def decrypt(message_id):
                     password=None,
                 )
 
-            decrypted_message = private_key.decrypt(
-                encrypted_message,
+            symmetric_key = private_key.decrypt(
+                encrypted_key,
                 padding.OAEP(
                     mgf=padding.MGF1(algorithm=hashes.SHA256()),
                     algorithm=hashes.SHA256(),
                     label=None,
                 ),
-            ).decode("utf-8")
+            )
+
+            # Descifrar el mensaje con Fernet
+            fernet_cipher = Fernet(symmetric_key)
+            decrypted_message = fernet_cipher.decrypt(encrypted_message).decode("utf-8")
 
             # Verificar la firma digital usando clave pública del remitente
             conn = get_db_connection()
@@ -381,6 +377,7 @@ def decrypt(message_id):
         return redirect(url_for('mensajes'))
 
 
+
 @app.route('/mensajes')
 def mensajes():
     if 'user_id' not in session:
@@ -400,3 +397,16 @@ def mensajes():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+""" 
+Resumen del flujo híbrido:
+Genera firmar digital
+Generar una clave simétrica para cifrar el mensaje.
+Cifrar el mensaje con Fernet usando la clave simétrica.
+Cifrar la clave simétrica con RSA usando la clave pública del destinatario.
+Guardar el mensaje cifrado, la clave simétrica cifrada y la firma digital.
+Durante el descifrado:
+Descifrar la clave simétrica con RSA.
+Usar la clave simétrica para descifrar el mensaje.
+Verificar la firma
+"""
