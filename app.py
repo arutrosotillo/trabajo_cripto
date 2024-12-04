@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from generate_and_store_hmac_key import load_key
 import logging
-
+from pki_despliegue import create_user_certificate, int_key, int_cert
 
 # Configuración de logging (mensajes en la terminal)
 logging.basicConfig(
@@ -162,26 +162,22 @@ def verify_signature(message: str, signature: bytes, public_key_pem: str) -> boo
         logging.error(f"Error verificando la firma: {e}")
         return False
 
-
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
 
-        # El hash es efectivo para guardar contraseñas, porque si alguien accede a la base de datos, aunque la funcion de hash sea conocida, no va a poder "unhash" la contraseña.
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-
-        # Log para mostrar el hash de la contraseña (no recomendado en producción)
-        logging.info(f"Hash de la contraseña generada para {username}: {hashed_password}")
-
         conn = get_db_connection()
         try:
             conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
             conn.commit()
-            # Generar y almacenar las claves de cifrado para el usuario
-            generate_user_keys(username)
-            flash('Registro exitoso', 'success')
+            
+            # Generar certificado de usuario
+            create_user_certificate(username, int_key, int_cert)
+            
+            flash('Registro exitoso y certificado generado.', 'success')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
             flash('El nombre de usuario ya existe', 'danger')
@@ -189,7 +185,6 @@ def register():
             conn.close()
     
     return render_template('register.html')
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
