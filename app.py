@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 import logging
 from cryptography.fernet import Fernet
-
+from pki_despliegue import create_user_certificate, int_key, int_cert
 
 # Configuración de logging (mensajes en la terminal)
 logging.basicConfig(
@@ -174,6 +174,8 @@ def register():
             conn.commit()
             # Generar y almacenar las claves de cifrado para el usuario
             generate_user_keys(username)
+            # Generar certificado de usuario
+            create_user_certificate(username, int_key, int_cert)
             flash('Registro exitoso', 'success')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
